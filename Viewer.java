@@ -1,6 +1,8 @@
 import java.awt.*;
 import java.awt.event.*;
 import javax.swing.JScrollBar;
+import javax.swing.SwingUtilities;
+
 import java.util.Collections;
 
 class Line {
@@ -95,6 +97,43 @@ public class Viewer extends Canvas {
 			if (sel0 != null) setSelection(sel0.beg.tpos, sel0.end.tpos);
 		}
 	}
+
+
+	  private boolean isWordChar(char ch) {
+    return Character.isLetterOrDigit(ch) || ch == '_';
+  }
+
+  private void selectWordAt(int x, int y) {
+    Position p = Pos(x, y);
+    int t = p.tpos;
+
+    if (text.length() == 0) return;
+
+    // If click lands at EOF, step back once
+    if (t >= text.length()) t = text.length() - 1;
+
+    // If we clicked "just after" a word char, prefer the previous char
+    if (!isWordChar(text.charAt(t)) && t > 0 && isWordChar(text.charAt(t - 1))) {
+      t = t - 1;
+    }
+
+    // If not on a word char at all, clear selection/caret behavior (optional)
+    if (!isWordChar(text.charAt(t))) {
+      removeSelection();
+      setCaret(p);
+      return;
+    }
+
+    int start = t;
+    while (start > 0 && isWordChar(text.charAt(start - 1))) start--;
+
+    int end = t + 1;
+    while (end < text.length() && isWordChar(text.charAt(end))) end++;
+
+    setSelection(start, end); // highlights the word
+    // If you want a caret too, uncomment:
+    // setCaret(end);
+  }
 
 /*------------------------------------------------------------
 *  position handling
@@ -299,7 +338,17 @@ public class Viewer extends Canvas {
 *  mouse handling
 *-----------------------------------------------------------*/
 
-	private void doMousePressed(MouseEvent e) {
+	  private void doMousePressed(MouseEvent e) {
+		// Double click selects a word
+		if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+		removeCaret();
+		removeSelection();
+		selectWordAt(e.getX(), e.getY());
+		lastPos = null;
+		return;
+		}
+
+		// Single click starts a selection drag as before
 		removeCaret(); removeSelection();
 		Position pos = Pos(e.getX(), e.getY());
 		sel = new Selection(pos, pos);
@@ -334,6 +383,10 @@ public class Viewer extends Canvas {
 	}
 
 	private void doMouseReleased(MouseEvent e) {
+		if (sel == null) {          
+			lastPos = null;
+			return;
+		}
 		if (sel.beg.tpos == sel.end.tpos) setCaret(sel.beg);
 		lastPos = null;
 	}
