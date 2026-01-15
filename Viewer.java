@@ -308,6 +308,11 @@ public class Viewer extends Canvas {
         repaintAllKeepingCaretSelection();
     }
 
+    public void copySelectionToClipboardFromMenu() { copySelectionToClipboard(); }
+    public void cutSelectionToClipboardFromMenu()  { cutSelectionToClipboard(); }
+    public void pasteFromClipboardFromMenu()       { pasteFromClipboard(); }
+
+
     private void repaintAllKeepingCaretSelection() {
         Position caret0 = caret;
         Selection sel0 = sel;
@@ -664,36 +669,45 @@ public class Viewer extends Canvas {
         }
     }
 
-    private void doKeyPressed(KeyEvent e) {
-        if (caret != null) {
-            int key = e.getKeyCode();
-            int pos = caret.tpos;
-            char ch;
+   private void doKeyPressed(KeyEvent e) {
 
-            if (key == KeyEvent.VK_RIGHT) {
-                pos++;
-                ch = text.charAt(pos);
-                if (ch == '\n') {
-                    pos++;
-                }
-                setCaret(pos);
-
-            } else if (key == KeyEvent.VK_LEFT) {
-                pos--;
-                ch = text.charAt(pos);
-                if (ch == '\n') {
-                    pos--;
-                }
-                setCaret(pos);
-
-            } else if (key == KeyEvent.VK_UP) {
-                setCaret(caret.x, caret.y - caret.line.h);
-
-            } else if (key == KeyEvent.VK_DOWN) {
-                setCaret(caret.x, caret.y + caret.line.h);
-            }
-        }
+    // Handle clipboard shortcuts first (they should work even if caret is null)
+    if (e.isControlDown()) {
+        int k = e.getKeyCode();
+        if (k == KeyEvent.VK_C) { copySelectionToClipboard(); return; }
+        if (k == KeyEvent.VK_X) { cutSelectionToClipboard(); return; }
+        if (k == KeyEvent.VK_V) { pasteFromClipboard(); return; }
     }
+
+    // Navigation keys require a caret
+    if (caret == null) {
+        return;
+    }
+
+    int key = e.getKeyCode();
+    int pos = caret.tpos;
+
+    if (key == KeyEvent.VK_RIGHT) {
+        pos++;
+        char ch = text.charAt(pos);
+        if (ch == '\n') pos++;     // CRLF-aware (skip \n after \r)
+        setCaret(pos);
+
+    } else if (key == KeyEvent.VK_LEFT) {
+        pos--;
+        char ch = text.charAt(pos);
+        if (ch == '\n') pos--;     // CRLF-aware
+        setCaret(pos);
+
+    } else if (key == KeyEvent.VK_UP) {
+        setCaret(caret.x, caret.y - caret.line.h);
+
+    } else if (key == KeyEvent.VK_DOWN) {
+        setCaret(caret.x, caret.y + caret.line.h);
+    }
+}
+
+
 
     /*------------------------------------------------------------
    *  mouse handling
@@ -855,6 +869,46 @@ public class Viewer extends Canvas {
 
         repaint(LEFT, rebuilt.y, getWidth(), getHeight());
     }
+
+
+        private void copySelectionToClipboard() {
+        if (sel == null) return;
+        int a = Math.min(sel.beg.tpos, sel.end.tpos);
+        int b = Math.max(sel.beg.tpos, sel.end.tpos);
+        Editor.AppClipboard.set(text.copyFragment(a, b));
+    }
+
+    private void cutSelectionToClipboard() {
+        if (sel == null) return;
+        int a = Math.min(sel.beg.tpos, sel.end.tpos);
+        int b = Math.max(sel.beg.tpos, sel.end.tpos);
+        Editor.AppClipboard.set(text.copyFragment(a, b));
+        text.delete(a, b);
+        // doUpdate will restore caret
+    }
+
+    private void pasteFromClipboard() {
+        if (caret == null) return;
+
+        // If there is a selection, replace it (typical editor behavior)
+        if (sel != null) {
+            int a = Math.min(sel.beg.tpos, sel.end.tpos);
+            int b = Math.max(sel.beg.tpos, sel.end.tpos);
+            text.delete(a, b);
+            // caret will be moved by doUpdate to a
+        }
+
+        Text.StyledFragment frag = Editor.AppClipboard.get();
+        if (frag == null || frag.text == null || frag.text.isEmpty()) return;
+
+        int count = Editor.AppClipboard.incPasteCount();
+        System.out.println("[debug] paste #" + count);
+
+        int p = (caret != null) ? caret.tpos : 0;
+        text.insertFragment(p, frag);
+        scrollBar.setValues(firstTpos, 0, 0, text.length());
+    }
+
 
     /*------------------------------------------------------------
    *  updates: simplest correct approach = rebuild from change point

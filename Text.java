@@ -43,6 +43,29 @@ public class Text {
         ORIGINAL, ADD
     }
 
+        public static final class StyledRun {
+        public final int from; // inclusive, relative to fragment start
+        public final int to;   // exclusive, relative to fragment start
+        public final Style style;
+
+        public StyledRun(int from, int to, Style style) {
+            this.from = from;
+            this.to = to;
+            this.style = style;
+        }
+    }
+
+    public static final class StyledFragment {
+        public final String text;
+        public final java.util.List<StyledRun> runs;
+
+        public StyledFragment(String text, java.util.List<StyledRun> runs) {
+            this.text = text;
+            this.runs = runs;
+        }
+    }
+
+
     private static final class Piece {
 
         BufferKind buf;
@@ -343,6 +366,61 @@ public class Text {
         normalizeStyles();
     }
 
+        public String substring(int from, int to) {
+        from = adjustPos(from);
+        to = adjustPos(to);
+        if (from >= to) return "";
+        StringBuilder sb = new StringBuilder(to - from);
+        for (int i = from; i < to; i++) sb.append(charAt(i));
+        return sb.toString();
+    }
+
+    public StyledFragment copyFragment(int from, int to) {
+        from = adjustPos(from);
+        to = adjustPos(to);
+        if (from >= to) return new StyledFragment("", java.util.Collections.emptyList());
+
+        normalizeStyles(); // ensure coverage & sorted
+
+        String txt = substring(from, to);
+        java.util.ArrayList<StyledRun> out = new java.util.ArrayList<>();
+
+        for (StyleRun r : styles) {
+            if (r.to <= from) continue;
+            if (r.from >= to) break;
+
+            int a = Math.max(from, r.from);
+            int b = Math.min(to, r.to);
+            if (a < b) out.add(new StyledRun(a - from, b - from, r.style));
+        }
+
+        if (out.isEmpty()) out.add(new StyledRun(0, txt.length(), defaultStyle));
+        return new StyledFragment(txt, out);
+    }
+
+    // Force the style over [from,to) to be exactly "style"
+    public void setStyleRange(int from, int to, Style style) {
+        applyStyle(from, to, st -> style);
+    }
+
+    // Insert styled fragment: insert text, then apply runs to inserted region
+    public void insertFragment(int pos, StyledFragment frag) {
+        if (frag == null || frag.text == null || frag.text.isEmpty()) return;
+        pos = adjustPos(pos);
+
+        // Insert the raw text first
+        insert(pos, frag.text);
+
+        // Now overwrite styles for the inserted region according to runs
+        int base = pos;
+        for (StyledRun r : frag.runs) {
+            int a = base + Math.max(0, r.from);
+            int b = base + Math.min(frag.text.length(), r.to);
+            if (a < b) setStyleRange(a, b, r.style);
+        }
+    }
+
+
     // Clamp position into [0..len]
     private int adjustPos(int pos) {
         if (pos < 0) {
@@ -605,7 +683,7 @@ public class Text {
         for (int i = 0; i < styles.size(); i++) {
             StyleRun r = styles.get(i);
             Style s = r.style;
-            out.add(i + ": [" + r.from + ".." + r.to + ") "
+            out.add(i + ": (" + r.from + ".." + r.to + ") "
                     + s.family + " " + s.size
                     + " bold=" + s.bold
                     + " italic=" + s.italic

@@ -7,6 +7,36 @@ import javax.swing.*;
 
 public class Editor {
 
+    public static final class AppClipboard {
+
+        private AppClipboard() {
+        }
+
+        private static Text.StyledFragment content = null;
+        private static int pasteCount = 0;
+
+        public static void set(Text.StyledFragment frag) {
+            content = frag;
+        }
+
+        public static Text.StyledFragment get() {
+            return content;
+        }
+
+        public static boolean hasContent() {
+            return content != null && content.text != null && !content.text.isEmpty();
+        }
+
+        // Increment on each paste (debugging)
+        public static int incPasteCount() {
+            return ++pasteCount;
+        }
+
+        public static int getPasteCount() {
+            return pasteCount;
+        }
+    }
+
     public static void main(String[] arg) {
         if (arg.length < 1) {
             System.out.println("-- file name missing");
@@ -122,6 +152,38 @@ public class Editor {
         });
         bar.add(colorBtn);
 
+        bar.addSeparator(new Dimension(16, 0));
+
+        // ---------- Clipboard ----------
+        JToolBar bar2 = new JToolBar();
+        bar2.setFloatable(false);
+
+        bar2.add(new JLabel("Clipboard: "));
+
+        JButton cutBtn = new JButton("Cut");
+        cutBtn.setFocusable(false);
+        cutBtn.addActionListener(e -> {
+            viewer.cutSelectionToClipboardFromMenu();
+            viewer.requestFocus();
+        });
+        bar2.add(cutBtn);
+
+        JButton copyBtn = new JButton("Copy");
+        copyBtn.setFocusable(false);
+        copyBtn.addActionListener(e -> {
+            viewer.copySelectionToClipboardFromMenu();
+            viewer.requestFocus();
+        });
+        bar2.add(copyBtn);
+
+        JButton pasteBtn = new JButton("Paste");
+        pasteBtn.setFocusable(false);
+        pasteBtn.addActionListener(e -> {
+            viewer.pasteFromClipboardFromMenu();
+            viewer.requestFocus();
+        });
+        bar2.add(pasteBtn);
+
         // ---- Frame ----
         JFrame frame = new JFrame(path);
         frame.addWindowListener(new WindowAdapter() {
@@ -131,12 +193,17 @@ public class Editor {
         });
         frame.setSize(700, 800);
         frame.setResizable(true);
+        JPanel root = new JPanel(new BorderLayout());
 
         // Put toolbar on top, content in center
-        JPanel root = new JPanel(new BorderLayout());
-        root.add(bar, BorderLayout.NORTH);
-        root.add(content, BorderLayout.CENTER);
+        JPanel bars = new JPanel();
+        bars.setLayout(new BoxLayout(bars, BoxLayout.Y_AXIS));
+        bars.add(bar);
+        bars.add(bar2);
 
+        root.add(bars, BorderLayout.NORTH);
+        root.add(content, BorderLayout.CENTER);
+        
         frame.setContentPane(root);
         frame.setVisible(true);
         viewer.requestFocus();
