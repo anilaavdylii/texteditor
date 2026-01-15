@@ -30,7 +30,7 @@ class UpdateEvent {  // [from..to[ was replaced by text
 /**
  * *****************************************************************
  * Piece list / piece table + Style runs
- ******************************************************************
+ * *****************************************************************
  */
 public class Text {
 
@@ -43,7 +43,8 @@ public class Text {
         ORIGINAL, ADD
     }
 
-        public static final class StyledRun {
+    public static final class StyledRun {
+
         public final int from; // inclusive, relative to fragment start
         public final int to;   // exclusive, relative to fragment start
         public final Style style;
@@ -56,6 +57,7 @@ public class Text {
     }
 
     public static final class StyledFragment {
+
         public final String text;
         public final java.util.List<StyledRun> runs;
 
@@ -64,7 +66,6 @@ public class Text {
             this.runs = runs;
         }
     }
-
 
     private static final class Piece {
 
@@ -337,48 +338,242 @@ public class Text {
    * Construction / file loading
    * ============================================================ */
     public Text(String fn) {
-        String fileText;
-        try {
-            FileInputStream s = new FileInputStream(fn);
-            InputStreamReader r = new InputStreamReader(s);
+        String raw;
+        try (FileInputStream s = new FileInputStream(fn); InputStreamReader r = new InputStreamReader(s)) {
+
             int available = s.available();
             char[] tmp = new char[Math.max(0, available)];
             int read = r.read(tmp, 0, tmp.length);
-            r.close();
-            s.close();
             if (read < 0) {
                 read = 0;
             }
-            fileText = new String(tmp, 0, read);
+            raw = new String(tmp, 0, read);
+
         } catch (IOException e) {
-            fileText = "";
+            raw = "";
         }
 
-        originalBuffer = fileText;
-        len = originalBuffer.length();
+        // Try META/TEXT parsing; if it fails, fall back to plain text behavior.
+        Parsed parsed = tryParseMeta(raw);
+
+        this.originalBuffer = parsed.text;
+        this.len = originalBuffer.length();
+
+        pieces.clear();
         if (len > 0) {
             pieces.add(new Piece(BufferKind.ORIGINAL, 0, len, System.currentTimeMillis()));
         }
 
-        // style: one run covering the whole initial text
+        // Apply default style + runs
+        this.defaultStyle = parsed.defaultStyle != null ? parsed.defaultStyle : this.defaultStyle;
+
         styles.clear();
-        styles.add(new StyleRun(0, len, defaultStyle));
+        if (parsed.runs != null && !parsed.runs.isEmpty()) {
+            for (StyleRun rrun : parsed.runs) {
+                // clamp to current length to be safe
+                int a = Math.max(0, Math.min(len, rrun.from));
+                int b = Math.max(0, Math.min(len, rrun.to));
+                if (a < b) {
+                    styles.add(new StyleRun(a, b, rrun.style));
+                }
+            }
+        } else {
+            styles.add(new StyleRun(0, len, defaultStyle));
+        }
+
         normalizeStyles();
     }
 
-        public String substring(int from, int to) {
+    private static final class Parsed {
+
+        final String text;
+        final Style defaultStyle;
+        final ArrayList<StyleRun> runs;
+
+        Parsed(String text, Style defaultStyle, ArrayList<StyleRun> runs) {
+            this.text = text;
+            this.defaultStyle = defaultStyle;
+            this.runs = runs;
+        }
+    }
+
+    private static Parsed tryParseMeta(String raw) {
+        // Plain ASCII fallback by default:
+        Parsed fallback = new Parsed(raw, null, null);
+
+        if (raw == null || raw.isEmpty()) {
+            return fallback;
+        }
+
+        // Must start with "META" at the very beginning
+        if (!raw.startsWith("META")) {
+            return fallback;
+        }
+
+        // We parse line-by-line until TEXT, then everything after TEXT's newline is the text.
+        // If anything is malformed, we fall back to plain.
+        try {
+            java.io.BufferedReader br = new java.io.BufferedReader(new java.io.StringReader(raw));
+
+            String line = br.readLine();
+            if (line == null || !line.equals("META")) {
+                return fallback;
+            }
+
+            Style def = null;
+            ArrayList<StyleRun> runs = new ArrayList<>();
+
+            while (true) {
+                line = br.readLine();
+                if (line == null) {
+                    // no TEXT marker => fallback
+                    return fallback;
+                }
+                if (line.equals("TEXT")) {
+                    break;
+                }
+                if (line.isBlank()) {
+                    continue;
+                }
+
+                // DEFAULT|family|size|bold|italic|underline|strike|r|g|b
+                // RUN|from|to|family|size|bold|italic|underline|strike|r|g|b
+                String[] parts = line.split("\\|");
+                if (parts.length < 1) {
+                    continue;
+                }
+
+                if (parts[0].equals("DEFAULT")) {
+                    if (parts.length != 10) {
+                        return fallback;
+                    }
+                    def = parseStyleParts(parts, 1);
+                } else if (parts[0].equals("RUN")) {
+                    if (parts.length != 12) {
+                        return fallback;
+                    }
+                    int from = Integer.parseInt(parts[1]);
+                    int to = Integer.parseInt(parts[2]);
+                    Style st = parseStyleParts(parts, 3);
+                    runs.add(new StyleRun(from, to, st));
+                } else {
+                    // unknown line => ignore or fallback; I choose ignore
+                }
+            }
+
+            // Read remaining lines as text, preserving newlines exactly as in file after TEXT.
+            // br.readLine() strips newlines, so we add '\n' back between lines.
+            StringBuilder text = new StringBuilder();
+            String tline;
+            boolean first = true;
+            while ((tline = br.readLine()) != null) {
+                if (!first) {
+                    text.append("\n");
+                }
+                text.append(tline);
+                first = false;
+            }
+
+            return new Parsed(text.toString(), def, runs);
+
+        } catch (Exception ex) {
+            return fallback;
+        }
+    }
+
+    private static Style parseStyleParts(String[] parts, int idx) {
+        // parts[idx+0]=family, idx+1=size, idx+2=bold, idx+3=italic, idx+4=underline, idx+5=strike, idx+6=r, idx+7=g, idx+8=b
+        String family = parts[idx];
+        int size = Integer.parseInt(parts[idx + 1]);
+        boolean bold = Integer.parseInt(parts[idx + 2]) != 0;
+        boolean italic = Integer.parseInt(parts[idx + 3]) != 0;
+        boolean underline = Integer.parseInt(parts[idx + 4]) != 0;
+        boolean strike = Integer.parseInt(parts[idx + 5]) != 0;
+        int r = Integer.parseInt(parts[idx + 6]);
+        int g = Integer.parseInt(parts[idx + 7]);
+        int b = Integer.parseInt(parts[idx + 8]);
+        java.awt.Color color = new java.awt.Color(clamp255(r), clamp255(g), clamp255(b));
+
+        return new Style(family, size, bold, italic, color, underline, strike);
+    }
+
+    private static int clamp255(int v) {
+        return Math.max(0, Math.min(255, v));
+    }
+
+    public String getAllText() {
+        StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            sb.append(charAt(i));
+        }
+        return sb.toString();
+    }
+
+    public void saveWithMeta(String fn) throws java.io.IOException {
+        normalizeStyles();
+
+        try (java.io.BufferedWriter w = new java.io.BufferedWriter(
+                new java.io.OutputStreamWriter(new java.io.FileOutputStream(fn), java.nio.charset.StandardCharsets.UTF_8))) {
+
+            w.write("META\n");
+
+            // DEFAULT
+            w.write(encodeDefault(defaultStyle));
+            w.write("\n");
+
+            // RUNS (skip default-only runs if you want smaller files; optional)
+            for (StyleRun r : styles) {
+                if (r.from >= r.to) {
+                    continue;
+                }
+                w.write(encodeRun(r));
+                w.write("\n");
+            }
+
+            w.write("TEXT\n");
+            w.write(getAllText());
+        }
+    }
+
+    private static String encodeDefault(Style s) {
+        return "DEFAULT|" + encodeStyle(s);
+    }
+
+    private static String encodeRun(StyleRun r) {
+        return "RUN|" + r.from + "|" + r.to + "|" + encodeStyle(r.style);
+    }
+
+    private static String encodeStyle(Style s) {
+        return s.family + "|"
+                + s.size + "|"
+                + (s.bold ? 1 : 0) + "|"
+                + (s.italic ? 1 : 0) + "|"
+                + (s.underline ? 1 : 0) + "|"
+                + (s.strike ? 1 : 0) + "|"
+                + s.color.getRed() + "|"
+                + s.color.getGreen() + "|"
+                + s.color.getBlue();
+    }
+
+    public String substring(int from, int to) {
         from = adjustPos(from);
         to = adjustPos(to);
-        if (from >= to) return "";
+        if (from >= to) {
+            return "";
+        }
         StringBuilder sb = new StringBuilder(to - from);
-        for (int i = from; i < to; i++) sb.append(charAt(i));
+        for (int i = from; i < to; i++) {
+            sb.append(charAt(i));
+        }
         return sb.toString();
     }
 
     public StyledFragment copyFragment(int from, int to) {
         from = adjustPos(from);
         to = adjustPos(to);
-        if (from >= to) return new StyledFragment("", java.util.Collections.emptyList());
+        if (from >= to) {
+            return new StyledFragment("", java.util.Collections.emptyList());
+        }
 
         normalizeStyles(); // ensure coverage & sorted
 
@@ -386,15 +581,23 @@ public class Text {
         java.util.ArrayList<StyledRun> out = new java.util.ArrayList<>();
 
         for (StyleRun r : styles) {
-            if (r.to <= from) continue;
-            if (r.from >= to) break;
+            if (r.to <= from) {
+                continue;
+            }
+            if (r.from >= to) {
+                break;
+            }
 
             int a = Math.max(from, r.from);
             int b = Math.min(to, r.to);
-            if (a < b) out.add(new StyledRun(a - from, b - from, r.style));
+            if (a < b) {
+                out.add(new StyledRun(a - from, b - from, r.style));
+            }
         }
 
-        if (out.isEmpty()) out.add(new StyledRun(0, txt.length(), defaultStyle));
+        if (out.isEmpty()) {
+            out.add(new StyledRun(0, txt.length(), defaultStyle));
+        }
         return new StyledFragment(txt, out);
     }
 
@@ -405,7 +608,9 @@ public class Text {
 
     // Insert styled fragment: insert text, then apply runs to inserted region
     public void insertFragment(int pos, StyledFragment frag) {
-        if (frag == null || frag.text == null || frag.text.isEmpty()) return;
+        if (frag == null || frag.text == null || frag.text.isEmpty()) {
+            return;
+        }
         pos = adjustPos(pos);
 
         // Insert the raw text first
@@ -416,10 +621,11 @@ public class Text {
         for (StyledRun r : frag.runs) {
             int a = base + Math.max(0, r.from);
             int b = base + Math.min(frag.text.length(), r.to);
-            if (a < b) setStyleRange(a, b, r.style);
+            if (a < b) {
+                setStyleRange(a, b, r.style);
+            }
         }
     }
-
 
     // Clamp position into [0..len]
     private int adjustPos(int pos) {
@@ -448,8 +654,8 @@ public class Text {
                 int off = pos - cur;
                 int idx = p.start + off;
                 if (p.buf == BufferKind.ORIGINAL) {
-                    return originalBuffer.charAt(idx); 
-                }else {
+                    return originalBuffer.charAt(idx);
+                } else {
                     return addBuffer.charAt(idx);
                 }
             }

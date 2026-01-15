@@ -55,7 +55,8 @@ public class Editor {
         }
 
         JScrollBar scrollBar = new JScrollBar(Adjustable.VERTICAL, 0, 0, 0, 0);
-        Viewer viewer = new Viewer(new Text(path), scrollBar);
+        Text model = new Text(path);
+        Viewer viewer = new Viewer(model, scrollBar);
 
         // ---- Main content panel (viewer + scrollbar) ----
         JPanel content = new JPanel(new BorderLayout());
@@ -188,9 +189,15 @@ public class Editor {
         JFrame frame = new JFrame(path);
         frame.addWindowListener(new WindowAdapter() {
             public void windowClosing(WindowEvent e) {
+                try {
+                    model.saveWithMeta(path);
+                } catch (Exception ex) {
+                    System.out.println("-- failed to save " + path + ": " + ex.getMessage());
+                }
                 System.exit(0);
             }
         });
+
         frame.setSize(700, 800);
         frame.setResizable(true);
         JPanel root = new JPanel(new BorderLayout());
@@ -203,7 +210,7 @@ public class Editor {
 
         root.add(bars, BorderLayout.NORTH);
         root.add(content, BorderLayout.CENTER);
-        
+
         frame.setContentPane(root);
         frame.setVisible(true);
         viewer.requestFocus();

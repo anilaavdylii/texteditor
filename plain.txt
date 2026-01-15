@@ -1,0 +1,7 @@
+META
+DEFAULT|Monospaced|18|0|0|0|0|0|0|0
+RUN|0|15|Monospaced|18|0|0|0|0|0|0|0
+TEXT
+Hello
+World
+
