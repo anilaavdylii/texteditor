@@ -1,2 +1,6 @@
 # Compiled Java class files
 *.class
+
+
+.metals/
+.vscode/
