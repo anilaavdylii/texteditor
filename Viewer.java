@@ -38,8 +38,7 @@ class Selection {
 
 /**
  * ********************************************************************
- * Viewer
- *********************************************************************
+ * Viewer ********************************************************************
  */
 public class Viewer extends Canvas {
 
@@ -58,6 +57,9 @@ public class Viewer extends Canvas {
     Position lastPos;      // last mouse position: used during mouse dragging
     JScrollBar scrollBar;
     private Text.Style typingStyle;
+
+    private String lastFindQuery = "";
+    private static int globalFindCount = 0;
 
     public Viewer(Text t, JScrollBar sb) {
         scrollBar = sb;
@@ -308,10 +310,94 @@ public class Viewer extends Canvas {
         repaintAllKeepingCaretSelection();
     }
 
-    public void copySelectionToClipboardFromMenu() { copySelectionToClipboard(); }
-    public void cutSelectionToClipboardFromMenu()  { cutSelectionToClipboard(); }
-    public void pasteFromClipboardFromMenu()       { pasteFromClipboard(); }
+    public void showFindDialog() {
+        String initial = (lastFindQuery == null) ? "" : lastFindQuery;
 
+        String q = JOptionPane.showInputDialog(
+                this,
+                "Find:",
+                initial
+        );
+        if (q == null) {
+            return; // cancelled
+
+        }
+        q = q.trim();
+        if (q.isEmpty()) {
+            return;
+        }
+
+        lastFindQuery = q;
+        findNextInternal(q);
+    }
+
+   public void findNext(String query) {
+    if (query == null) query = "";
+    query = query.trim();
+    if (query.isEmpty()) {
+        Toolkit.getDefaultToolkit().beep();
+        return;
+    }
+    lastFindQuery = query;
+    findNextInternal(query);
+}
+
+private void findNextInternal(String q) {
+    int count = ++globalFindCount;
+    System.out.println("[debug] find #" + count + " query=\"" + q + "\"");
+
+    // start after selection end, otherwise at caret
+    int start;
+    if (sel != null) {
+        start = Math.max(sel.beg.tpos, sel.end.tpos);
+    } else if (caret != null) {
+        start = caret.tpos;
+    } else {
+        start = 0;
+    }
+
+    String all = text.getAllText();
+    if (start < 0) start = 0;
+    if (start > all.length()) start = all.length();
+
+    int idx = all.indexOf(q, start);
+
+    if (idx < 0) {
+        Toolkit.getDefaultToolkit().beep();
+        System.out.println("[debug] find: no match");
+        return;
+    }
+
+    int a = idx;
+    int b = idx + q.length();
+
+    // If off-screen, scroll first; selection after scroll
+    if (a < firstTpos || a > lastTpos) {
+        scrollBar.setValue(a);
+        SwingUtilities.invokeLater(() -> {
+            removeSelection();
+            setSelection(a, b);
+        });
+    } else {
+        removeSelection();
+        setSelection(a, b);
+    }
+}
+   
+
+
+
+    public void copySelectionToClipboardFromMenu() {
+        copySelectionToClipboard();
+    }
+
+    public void cutSelectionToClipboardFromMenu() {
+        cutSelectionToClipboard();
+    }
+
+    public void pasteFromClipboardFromMenu() {
+        pasteFromClipboard();
+    }
 
     private void repaintAllKeepingCaretSelection() {
         Position caret0 = caret;
@@ -561,8 +647,8 @@ public class Viewer extends Canvas {
 
     public void setCaret(int tpos) {
         if (tpos >= firstTpos && tpos <= lastTpos) {
-            setCaret(Pos(tpos)); 
-        }else {
+            setCaret(Pos(tpos));
+        } else {
             caret = null;
         }
     }
@@ -669,45 +755,58 @@ public class Viewer extends Canvas {
         }
     }
 
-   private void doKeyPressed(KeyEvent e) {
+    private void doKeyPressed(KeyEvent e) {
 
-    // Handle clipboard shortcuts first (they should work even if caret is null)
-    if (e.isControlDown()) {
-        int k = e.getKeyCode();
-        if (k == KeyEvent.VK_C) { copySelectionToClipboard(); return; }
-        if (k == KeyEvent.VK_X) { cutSelectionToClipboard(); return; }
-        if (k == KeyEvent.VK_V) { pasteFromClipboard(); return; }
+        // Handle clipboard shortcuts first (they should work even if caret is null)
+        if (e.isControlDown()) {
+            int k = e.getKeyCode();
+            if (k == KeyEvent.VK_C) {
+                copySelectionToClipboard();
+                return;
+            }
+            if (k == KeyEvent.VK_X) {
+                cutSelectionToClipboard();
+                return;
+            }
+            if (k == KeyEvent.VK_V) {
+                pasteFromClipboard();
+                return;
+            }
+        }
+
+        // Navigation keys require a caret
+        if (caret == null) {
+            return;
+        }
+
+        int key = e.getKeyCode();
+        int pos = caret.tpos;
+
+        if (key == KeyEvent.VK_RIGHT) {
+            pos++;
+            char ch = text.charAt(pos);
+            if (ch == '\n') {
+                pos++;     // CRLF-aware (skip \n after \r)
+
+            }
+            setCaret(pos);
+
+        } else if (key == KeyEvent.VK_LEFT) {
+            pos--;
+            char ch = text.charAt(pos);
+            if (ch == '\n') {
+                pos--;     // CRLF-aware
+
+            }
+            setCaret(pos);
+
+        } else if (key == KeyEvent.VK_UP) {
+            setCaret(caret.x, caret.y - caret.line.h);
+
+        } else if (key == KeyEvent.VK_DOWN) {
+            setCaret(caret.x, caret.y + caret.line.h);
+        }
     }
-
-    // Navigation keys require a caret
-    if (caret == null) {
-        return;
-    }
-
-    int key = e.getKeyCode();
-    int pos = caret.tpos;
-
-    if (key == KeyEvent.VK_RIGHT) {
-        pos++;
-        char ch = text.charAt(pos);
-        if (ch == '\n') pos++;     // CRLF-aware (skip \n after \r)
-        setCaret(pos);
-
-    } else if (key == KeyEvent.VK_LEFT) {
-        pos--;
-        char ch = text.charAt(pos);
-        if (ch == '\n') pos--;     // CRLF-aware
-        setCaret(pos);
-
-    } else if (key == KeyEvent.VK_UP) {
-        setCaret(caret.x, caret.y - caret.line.h);
-
-    } else if (key == KeyEvent.VK_DOWN) {
-        setCaret(caret.x, caret.y + caret.line.h);
-    }
-}
-
-
 
     /*------------------------------------------------------------
    *  mouse handling
@@ -743,7 +842,8 @@ public class Viewer extends Canvas {
             if (lastPos == null) {
                 return; // ultra-safety
 
-                    }}
+            }
+        }
 
         Position pos = Pos(e.getX(), e.getY());
 
@@ -861,8 +961,8 @@ public class Viewer extends Canvas {
 
         Line rebuilt = fill(line.y, getHeight() - BOTTOM, pos.org);
         if (prev == null) {
-            firstLine = rebuilt; 
-        }else {
+            firstLine = rebuilt;
+        } else {
             prev.next = rebuilt;
             rebuilt.prev = prev;
         }
@@ -870,16 +970,19 @@ public class Viewer extends Canvas {
         repaint(LEFT, rebuilt.y, getWidth(), getHeight());
     }
 
-
-        private void copySelectionToClipboard() {
-        if (sel == null) return;
+    private void copySelectionToClipboard() {
+        if (sel == null) {
+            return;
+        }
         int a = Math.min(sel.beg.tpos, sel.end.tpos);
         int b = Math.max(sel.beg.tpos, sel.end.tpos);
         Editor.AppClipboard.set(text.copyFragment(a, b));
     }
 
     private void cutSelectionToClipboard() {
-        if (sel == null) return;
+        if (sel == null) {
+            return;
+        }
         int a = Math.min(sel.beg.tpos, sel.end.tpos);
         int b = Math.max(sel.beg.tpos, sel.end.tpos);
         Editor.AppClipboard.set(text.copyFragment(a, b));
@@ -888,7 +991,9 @@ public class Viewer extends Canvas {
     }
 
     private void pasteFromClipboard() {
-        if (caret == null) return;
+        if (caret == null) {
+            return;
+        }
 
         // If there is a selection, replace it (typical editor behavior)
         if (sel != null) {
@@ -899,7 +1004,9 @@ public class Viewer extends Canvas {
         }
 
         Text.StyledFragment frag = Editor.AppClipboard.get();
-        if (frag == null || frag.text == null || frag.text.isEmpty()) return;
+        if (frag == null || frag.text == null || frag.text.isEmpty()) {
+            return;
+        }
 
         int count = Editor.AppClipboard.incPasteCount();
         System.out.println("[debug] paste #" + count);
